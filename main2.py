@@ -1,6 +1,7 @@
 """
-台股分析通知系統主程式
+台股分析通知系統主程式 v2
 整合 PE ratio、KDJ 技術指標分析，並透過 LINE 發送通知
+J值判斷邏輯：昨日大於10，今日小於10 (買進)；昨日小於90，今日大於90 (賣出)
 """
 
 import os
@@ -26,10 +27,11 @@ from stock_tool.kdj import KDJAnalyzer
 from notify import LineNotifier
 
 
-class StockAnalysisSystem:
+class StockAnalysisSystemV2:
     def __init__(self):
-        """初始化股票分析系統"""
-        print("🔧 正在初始化系統...")
+        """初始化股票分析系統 v2"""
+        print("🔧 正在初始化系統 v2...")
+        print("🔄 v2 特色: J值變化趨勢判斷 (昨日>10今日<10買進, 昨日<90今日>90賣出)")
         
         # 初始化分析器
         print("📊 初始化分析器...")
@@ -330,9 +332,68 @@ class StockAnalysisSystem:
         except:
             return False
     
+    def analyze_j_value_trend(self, kdj_result):
+        """
+        分析 J 值趨勢變化 - v2 核心邏輯
+        
+        Args:
+            kdj_result (dict): KDJ 計算結果，包含 J_series
+            
+        Returns:
+            dict: 包含趨勢分析結果
+        """
+        try:
+            if 'error' in kdj_result or 'J_series' not in kdj_result:
+                return {"trend": "invalid", "signal": "invalid"}
+            
+            j_series = kdj_result['J_series']
+            
+            # 至少需要2天的資料來比較趨勢
+            if len(j_series) < 2:
+                return {"trend": "insufficient_data", "signal": "invalid"}
+            
+            yesterday_j = j_series[-2]  # 昨日 J 值
+            today_j = j_series[-1]     # 今日 J 值
+            
+            result = {
+                "trend": "no_signal",
+                "signal": "hold",
+                "yesterday_j": round(yesterday_j, 2),
+                "today_j": round(today_j, 2),
+                "change": round(today_j - yesterday_j, 2)
+            }
+            
+            # v2 判斷邏輯：
+            # 買進條件：昨日 J > 10 且 今日 J < 10 (突破下方)
+            if yesterday_j > 10 and today_j < 10:
+                result["trend"] = "breakthrough_down"
+                result["signal"] = "buy"
+                print(f"📉 J值向下突破: {yesterday_j:.1f} → {today_j:.1f} (買進信號)")
+            
+            # 賣出條件：昨日 J < 90 且 今日 J > 90 (突破上方)
+            elif yesterday_j < 90 and today_j > 90:
+                result["trend"] = "breakthrough_up"
+                result["signal"] = "sell"
+                print(f"📈 J值向上突破: {yesterday_j:.1f} → {today_j:.1f} (賣出信號)")
+            
+            # 其他情況記錄但不產生信號
+            else:
+                if today_j < 10:
+                    result["trend"] = "oversold"
+                elif today_j > 90:
+                    result["trend"] = "overbought"
+                else:
+                    result["trend"] = "normal"
+            
+            return result
+            
+        except Exception as e:
+            print(f"❌ J值趨勢分析失敗: {e}")
+            return {"trend": "error", "signal": "invalid"}
+    
     def analyze_single_stock(self, stock_code, pe_data):
         """
-        分析單一股票
+        分析單一股票 - v2 版本
         
         Args:
             stock_code (str): 股票代碼
@@ -347,9 +408,11 @@ class StockAnalysisSystem:
             'signal': 'hold',
             'pe_signal': 'hold',
             'kdj_signal': 'hold',
+            'j_trend': {},
             'volume_spike': False,
             'pe_ratio': None,
             'j_value': None,
+            'yesterday_j': None,
             'analysis_time': datetime.now().isoformat()
         }
         
@@ -381,10 +444,15 @@ class StockAnalysisSystem:
                 )
                 
                 if 'error' not in kdj_result:
-                    result['kdj_signal'] = kdj_result['signal']
                     result['j_value'] = kdj_result.get('J_value')
                     result['data_length'] = data_length
                     result['kdj_reliable'] = data_length >= 30  # 標記 KDJ 是否可靠
+                    
+                    # v2 核心：分析 J 值趨勢變化
+                    j_trend_analysis = self.analyze_j_value_trend(kdj_result)
+                    result['j_trend'] = j_trend_analysis
+                    result['kdj_signal'] = j_trend_analysis['signal']
+                    result['yesterday_j'] = j_trend_analysis.get('yesterday_j')
                     
                     # 檢查成交量異常
                     if price_data.get('volume'):
@@ -394,13 +462,13 @@ class StockAnalysisSystem:
             else:
                 print(f"❌ 股票 {stock_code} 資料不足，無法計算 KDJ")
             
-            # 綜合判斷買賣信號
+            # 綜合判斷買賣信號 - v2 版本
             # 只有在 KDJ 資料可靠的情況下才給出建議
             if result.get('kdj_reliable', False):
-                # 買進條件：J < 10 且 PE < 20
+                # v2 買進條件：J值向下突破 且 PE < 20
                 if (result['kdj_signal'] == 'buy' and result['pe_signal'] == 'buy'):
                     result['signal'] = 'buy'
-                # 賣出條件：J > 90 且 PE > 40  
+                # v2 賣出條件：J值向上突破 且 PE > 40  
                 elif (result['kdj_signal'] == 'sell' and result['pe_signal'] == 'sell'):
                     result['signal'] = 'sell'
             else:
@@ -416,9 +484,10 @@ class StockAnalysisSystem:
         return result
     
     def run_analysis(self):
-        """執行完整的股票分析流程"""
+        """執行完整的股票分析流程 - v2 版本"""
         start_time = time.time()
-        print("🚀 開始執行股票分析...")
+        print("🚀 開始執行股票分析 v2...")
+        print("🔄 v2 特色: J值趨勢突破判斷")
         print(f"⏰ 開始時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
         # 檢查是否為交易日
@@ -443,7 +512,7 @@ class StockAnalysisSystem:
             return
         
         # 分析每檔股票
-        print(f"\n🔍 步驟 3/4: 分析股票")
+        print(f"\n🔍 步驟 3/4: 分析股票 (v2 J值趨勢判斷)")
         buy_recommendations = []
         sell_recommendations = []
         total_analyzed = 0
@@ -468,12 +537,14 @@ class StockAnalysisSystem:
                     buy_recommendations.append(analysis_result)
                     reliability = "✅可靠" if analysis_result.get('kdj_reliable', False) else "⚠️資料不足"
                     data_info = f"({analysis_result.get('data_length', 0)} 天)"
-                    print(f"🔴 買進: {analysis_result['name']} ({stock_code}) - PE: {analysis_result.get('pe_ratio', 'N/A')}, J: {analysis_result.get('j_value', 'N/A')} [{reliability} {data_info}]")
+                    trend_info = f"J: {analysis_result.get('yesterday_j', 'N/A')}→{analysis_result.get('j_value', 'N/A')}"
+                    print(f"🔴 買進: {analysis_result['name']} ({stock_code}) - PE: {analysis_result.get('pe_ratio', 'N/A')}, {trend_info} [{reliability} {data_info}]")
                 elif analysis_result['signal'] == 'sell':
                     sell_recommendations.append(analysis_result)
                     reliability = "✅可靠" if analysis_result.get('kdj_reliable', False) else "⚠️資料不足"
                     data_info = f"({analysis_result.get('data_length', 0)} 天)"
-                    print(f"🔵 賣出: {analysis_result['name']} ({stock_code}) - PE: {analysis_result.get('pe_ratio', 'N/A')}, J: {analysis_result.get('j_value', 'N/A')} [{reliability} {data_info}]")
+                    trend_info = f"J: {analysis_result.get('yesterday_j', 'N/A')}→{analysis_result.get('j_value', 'N/A')}"
+                    print(f"🔵 賣出: {analysis_result['name']} ({stock_code}) - PE: {analysis_result.get('pe_ratio', 'N/A')}, {trend_info} [{reliability} {data_info}]")
                 elif analysis_result['signal'] in ['weak_buy', 'weak_sell']:
                     signal_type = "買進" if analysis_result['signal'] == 'weak_buy' else "賣出"
                     emoji = "🟠" if analysis_result['signal'] == 'weak_buy' else "🟣"
@@ -500,7 +571,7 @@ class StockAnalysisSystem:
         
         # 發送通知
         print(f"\n📱 步驟 4/4: 發送通知")
-        print(f"\n📋 分析完成！")
+        print(f"\n📋 分析完成！(v2 版本)")
         print(f"⏱️ 分析耗時: {analysis_duration:.1f} 秒")
         print(f"📊 總計分析: {total_analyzed} 檔股票")
         print(f"🔴 買進建議: {len(buy_recommendations)} 檔")
@@ -517,9 +588,9 @@ class StockAnalysisSystem:
                     all_recommendations = buy_recommendations + sell_recommendations
                     notification_result = self.line_notifier.send_detailed_notification(all_recommendations)
                 else:
-                    # 無建議時發送簡單通知
+                    # 無建議時發送簡單通知 (v2版本)
                     today_date = datetime.now().strftime('%Y-%m-%d')
-                    no_signal_message = f"📊 股票分析完成 ({today_date})\n\n今日無符合條件的買賣建議\n\n分析條件:\n• 買進: J<10 且 PE<20\n• 賣出: J>90 且 PE>40\n• 總計分析: {total_analyzed} 檔股票"
+                    no_signal_message = f"📊 股票分析完成 v2 ({today_date})\n\n今日無符合條件的買賣建議\n\n分析條件 (v2趨勢突破):\n• 買進: 昨日J>10→今日J<10 且 PE<20\n• 賣出: 昨日J<90→今日J>90 且 PE>40\n• 總計分析: {total_analyzed} 檔股票"
                     notification_result = self.line_notifier.send_message(no_signal_message)
                 
                 if notification_result.get('success'):
@@ -549,7 +620,7 @@ class StockAnalysisSystem:
 def main():
     """主程式入口"""
     try:
-        system = StockAnalysisSystem()
+        system = StockAnalysisSystemV2()
         system.run_analysis()
     except KeyboardInterrupt:
         print("\n⚠️ 程式被使用者中斷")
