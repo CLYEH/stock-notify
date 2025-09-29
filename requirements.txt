@@ -1,0 +1,6 @@
+twstock==1.4.0
+pandas==2.0.3
+numpy==1.24.3
+pymongo==4.15.1
+requests==2.31.0
+python-dotenv==1.0.1
