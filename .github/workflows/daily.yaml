@@ -3,7 +3,7 @@ name: daily-stock-job
 on:
   schedule:
     # 每天台北 09:00 執行（台北 UTC+8；09:00 = 01:00 UTC）
-    - cron: "0 17 30 * *"
+    - cron: "40 17 * * *"
   workflow_dispatch: {}  # 手動觸發用
 
 jobs:
