@@ -180,7 +180,7 @@ class StockAnalysisSystem:
                     sort=[("updated_at", -1)]
                 )
                 
-                if stock_data and self._is_data_recent(stock_data.get('date')):
+                if stock_data and self._is_data_today(stock_data):
                     # 檢查是否有足夠的歷史資料
                     price_history = stock_data.get('price_history', {})
                     has_sufficient_data = stock_data.get('has_sufficient_data', False)
@@ -195,7 +195,9 @@ class StockAnalysisSystem:
             # 從 twstock 獲取資料
             print(f"🌐 從 API 獲取股票 {stock_code} 價格資料...")
             stock = twstock.Stock(stock_code)
-            stock.fetch_from(2024, 1)  # 從 2024 年開始取得資料
+            # 動態計算過去 90 天的起始年月
+            start_dt = datetime.now() - timedelta(days=60)
+            stock.fetch_from(start_dt.year, start_dt.month)
             
             if not stock.price:
                 return {}
@@ -225,18 +227,68 @@ class StockAnalysisSystem:
             print(f"❌ 獲取股票 {stock_code} 價格資料失敗: {e}")
             return {}
     
-    def _is_data_recent(self, date):
-        """檢查資料是否為近期資料"""
-        if not date:
+    def _is_data_recent(self, doc_or_date):
+        """檢查資料是否為近期資料（使用實際交易日而非執行日）"""
+        # 支援直接傳入日期或整份文件
+        latest_market_date = None
+        if isinstance(doc_or_date, dict):
+            latest_market_date = (
+                doc_or_date.get('latest_data', {}).get('date')
+                or doc_or_date.get('date')
+            )
+        else:
+            latest_market_date = doc_or_date
+
+        if not latest_market_date:
             return False
-        
-        if isinstance(date, str):
+
+        # 轉為 datetime 物件
+        if isinstance(latest_market_date, str):
             try:
-                date = datetime.strptime(date, '%Y-%m-%d')
-            except:
-                return False
-        
-        return (datetime.now() - date).days <= 1
+                latest_market_date = datetime.strptime(latest_market_date, '%Y-%m-%d')
+            except Exception:
+                try:
+                    latest_market_date = pd.to_datetime(latest_market_date).to_pydatetime()
+                except Exception:
+                    return False
+
+        age_days = (datetime.now().date() - latest_market_date.date()).days
+        is_recent = age_days <= 3
+        try:
+            print(f"🗓️ 資料最新交易日: {latest_market_date.date()} | 距今天 {age_days} 天 | 新鮮: {'是' if is_recent else '否'}")
+        except Exception:
+            pass
+        return is_recent
+
+    def _is_data_today(self, doc_or_date):
+        """檢查資料的最新交易日是否為今天（價格資料使用）"""
+        latest_market_date = None
+        if isinstance(doc_or_date, dict):
+            latest_market_date = (
+                doc_or_date.get('latest_data', {}).get('date')
+                or doc_or_date.get('date')
+            )
+        else:
+            latest_market_date = doc_or_date
+
+        if not latest_market_date:
+            return False
+
+        if isinstance(latest_market_date, str):
+            try:
+                latest_market_date = datetime.strptime(latest_market_date, '%Y-%m-%d')
+            except Exception:
+                try:
+                    latest_market_date = pd.to_datetime(latest_market_date).to_pydatetime()
+                except Exception:
+                    return False
+
+        is_today = latest_market_date.date() == datetime.now().date()
+        try:
+            print(f"📅 價格資料最新交易日: {latest_market_date.date()} | 必須為今天: {'是' if is_today else '否'}")
+        except Exception:
+            pass
+        return is_today
     
     def _save_stock_data(self, stock_code, price_data):
         """
