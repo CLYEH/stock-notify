@@ -134,6 +134,8 @@ class LineNotifier:
         Returns:
             str: 格式化後的訊息
         """
+        from datetime import datetime
+        
         buy_stocks = []
         sell_stocks = []
         
@@ -152,6 +154,11 @@ class LineNotifier:
                 sell_stocks.append(stock_info)
         
         message_parts = []
+        
+        # 加上日期標題
+        today_date = datetime.now().strftime('%Y-%m-%d')
+        message_parts.append(f"📊 股票分析 v2 ({today_date})")
+        message_parts.append("")  # 空行
         
         # 買進通知（詳細版）
         if buy_stocks:

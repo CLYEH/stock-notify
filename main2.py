@@ -395,10 +395,16 @@ class StockAnalysisSystemV2:
             dict: 包含趨勢分析結果
         """
         try:
-            if 'error' in kdj_result or 'J_series' not in kdj_result:
+            # kdj_result 的 J_series 在 KDJ 字典中
+            if 'error' in kdj_result:
                 return {"trend": "invalid", "signal": "invalid"}
             
-            j_series = kdj_result['J_series']
+            # 從 KDJ 字典中取得 J_series
+            kdj_data = kdj_result.get('KDJ', {})
+            j_series = kdj_data.get('J_series', [])
+            
+            if not j_series:
+                return {"trend": "invalid", "signal": "invalid"}
             
             # 至少需要2天的資料來比較趨勢
             if len(j_series) < 2:
