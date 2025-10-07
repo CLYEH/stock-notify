@@ -737,7 +737,7 @@ def main():
         
         if is_holiday:
             # 如果是放假日，發送 LINE 通知並結束程式
-            print(f"📢 今天是{holiday_name} {holiday_category}，因此沒有開盤，交易暫停一日")
+            print(f"📢 今天是{holiday_name} ({holiday_category})，因此沒有開盤，交易暫停一日")
             
             # 嘗試發送 LINE 通知
             try:
