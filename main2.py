@@ -11,6 +11,8 @@ import requests
 import twstock
 import pandas as pd
 import time
+import csv
+from io import StringIO
 from datetime import datetime, timedelta
 from pymongo import MongoClient
 from pymongo.server_api import ServerApi
@@ -25,6 +27,58 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 from stock_tool.pe import PERatioAnalyzer
 from stock_tool.kdj import KDJAnalyzer
 from notify import LineNotifier
+
+
+def check_if_holiday():
+    """
+    檢查今日是否為放假日
+    從新北市政府開放資料API獲取放假日資料
+    
+    Returns:
+        tuple: (is_holiday: bool, holiday_name: str, holiday_category: str)
+    """
+    holiday_api_url = 'https://data.ntpc.gov.tw/api/datasets/308dcd75-6434-45bc-a95f-584da4fed251/csv/file'
+    
+    try:
+        print("🗓️ 正在檢查今日是否為放假日...")
+        response = requests.get(holiday_api_url, timeout=10)
+        response.raise_for_status()
+        
+        # 解析 CSV 資料
+        csv_content = StringIO(response.text)
+        csv_reader = csv.DictReader(csv_content)
+        
+        # 取得今日日期 (格式: 20250101)
+        today_date = datetime.now().strftime('%Y%m%d')
+        print(f"📅 今日日期: {today_date}")
+        
+        # 尋找今日的資料
+        for row in csv_reader:
+            if row['date'] == today_date:
+                is_holiday = row['isholiday'] == '是'
+                holiday_name = row['name'].strip() if row['name'] else ''
+                holiday_category = row['holidaycategory'].strip() if row['holidaycategory'] else ''
+                
+                # 軍人節不休市（股市照常交易）
+                if holiday_name == '軍人節':
+                    print("🪖 今日為軍人節，但股市照常交易")
+                    return False, '', ''
+                
+                if is_holiday:
+                    print(f"🎉 今日為放假日: {holiday_name or '週末/假日'} ({holiday_category})")
+                    return True, holiday_name or '週末/假日', holiday_category
+                else:
+                    print("✅ 今日為工作日，繼續執行程式")
+                    return False, '', ''
+        
+        # 如果找不到今日資料，視為工作日
+        print("⚠️ 未找到今日假期資料，視為工作日繼續執行")
+        return False, '', ''
+        
+    except Exception as e:
+        print(f"❌ 檢查放假日時發生錯誤: {e}")
+        print("⚠️ 無法確認假期狀態，繼續執行程式")
+        return False, '', ''
 
 
 class StockAnalysisSystemV2:
@@ -678,6 +732,30 @@ class StockAnalysisSystemV2:
 def main():
     """主程式入口"""
     try:
+        # 首先檢查今日是否為放假日
+        is_holiday, holiday_name, holiday_category = check_if_holiday()
+        
+        if is_holiday:
+            # 如果是放假日，發送 LINE 通知並結束程式
+            print(f"📢 今天是{holiday_name} {holiday_category}，因此沒有開盤，交易暫停一日")
+            
+            # 嘗試發送 LINE 通知
+            try:
+                line_notifier = LineNotifier()
+                message = f"📅 台股休市通知\n\n今天是{holiday_name} {holiday_category}，因此沒有開盤，交易暫停一日。"
+                result = line_notifier.send_message(message)
+                
+                if result.get('success'):
+                    print("✅ LINE 通知發送成功")
+                else:
+                    print(f"⚠️ LINE 通知發送失敗: {result.get('error')}")
+            except Exception as e:
+                print(f"⚠️ 無法發送 LINE 通知: {e}")
+            
+            print("🛑 程式結束")
+            return
+        
+        # 如果不是放假日，繼續執行分析
         system = StockAnalysisSystemV2()
         system.run_analysis()
     except KeyboardInterrupt:
