@@ -742,7 +742,7 @@ def main():
             # 嘗試發送 LINE 通知
             try:
                 line_notifier = LineNotifier()
-                message = f"📅 台股休市通知\n\n今天是{holiday_name} {holiday_category}，因此沒有開盤，交易暫停一日。"
+                message = f"📅 台股休市通知\n\n今天是{holiday_name} ({holiday_category})，因此沒有開盤，交易暫停一日。"
                 result = line_notifier.send_message(message)
                 
                 if result.get('success'):
