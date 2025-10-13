@@ -54,7 +54,9 @@ def check_if_holiday():
         
         # 尋找今日的資料
         for row in csv_reader:
-            if row['date'] == today_date:
+            # 處理 BOM 字符問題，CSV 第一個欄位可能是 '\ufeffdate' 而不是 'date'
+            date_value = row.get('date') or row.get('\ufeffdate')
+            if date_value == today_date:
                 is_holiday = row['isholiday'] == '是'
                 holiday_name = row['name'].strip() if row['name'] else ''
                 holiday_category = row['holidaycategory'].strip() if row['holidaycategory'] else ''
