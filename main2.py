@@ -8,7 +8,6 @@ import os
 import sys
 import json
 import requests
-import twstock
 import pandas as pd
 import time
 import csv
@@ -17,6 +16,80 @@ from datetime import datetime, timedelta
 from pymongo import MongoClient
 from pymongo.server_api import ServerApi
 from dotenv import load_dotenv
+from collections import namedtuple
+
+# ============================================================
+# Monkey patch twstock 以支援台灣證交所新增的「權值」欄位
+# 2024/12 起，API 新增第 10 個欄位，需要更新 DATATUPLE
+# ============================================================
+import twstock.stock as twstock_stock
+
+# 新的 DATATUPLE，包含新增的「權值」欄位
+PATCHED_DATATUPLE = namedtuple(
+    "Data",
+    [
+        "date",
+        "capacity",
+        "turnover",
+        "open",
+        "high",
+        "low",
+        "close",
+        "change",
+        "transaction",
+        "weight",  # 新增欄位：權值
+    ],
+)
+
+# 覆蓋原本的 DATATUPLE
+twstock_stock.DATATUPLE = PATCHED_DATATUPLE
+
+# 保存原始的 _make_datatuple 方法
+_original_twse_make_datatuple = twstock_stock.TWSEFetcher._make_datatuple
+_original_tpex_make_datatuple = twstock_stock.TPEXFetcher._make_datatuple
+
+def _patched_twse_make_datatuple(self, data):
+    """Patched version to handle new 'weight' field"""
+    data[0] = datetime.strptime(self._convert_date(data[0]), "%Y/%m/%d")
+    data[1] = int(data[1].replace(",", ""))
+    data[2] = int(data[2].replace(",", ""))
+    data[3] = None if data[3] == "--" else float(data[3].replace(",", ""))
+    data[4] = None if data[4] == "--" else float(data[4].replace(",", ""))
+    data[5] = None if data[5] == "--" else float(data[5].replace(",", ""))
+    data[6] = None if data[6] == "--" else float(data[6].replace(",", ""))
+    data[7] = float(
+        0.0 if data[7].replace(",", "") == "X0.00" else data[7].replace(",", "")
+    )
+    data[8] = int(data[8].replace(",", ""))
+    # 處理新增的權值欄位（可能為空字串）
+    data[9] = data[9] if len(data) > 9 else ""
+    return PATCHED_DATATUPLE(*data[:10])
+
+def _patched_tpex_make_datatuple(self, data):
+    """Patched version for TPEX to handle new 'weight' field"""
+    data[0] = datetime.strptime(
+        self._convert_date(data[0].replace("＊", "")), "%Y/%m/%d"
+    )
+    data[1] = int(data[1].replace(",", "")) * 1000
+    data[2] = int(data[2].replace(",", "")) * 1000
+    data[3] = None if data[3] == "--" else float(data[3].replace(",", ""))
+    data[4] = None if data[4] == "--" else float(data[4].replace(",", ""))
+    data[5] = None if data[5] == "--" else float(data[5].replace(",", ""))
+    data[6] = None if data[6] == "--" else float(data[6].replace(",", ""))
+    data[7] = float(data[7].replace(",", ""))
+    data[8] = int(data[8].replace(",", ""))
+    # 處理新增的權值欄位（可能為空字串或不存在）
+    data_weight = data[9] if len(data) > 9 else ""
+    return PATCHED_DATATUPLE(*data[:9], data_weight)
+
+# 應用 monkey patch
+twstock_stock.TWSEFetcher._make_datatuple = _patched_twse_make_datatuple
+twstock_stock.TPEXFetcher._make_datatuple = _patched_tpex_make_datatuple
+
+print("✅ twstock monkey patch 已套用 (支援新「權值」欄位)")
+# ============================================================
+
+import twstock
 
 # 載入環境變數
 load_dotenv()
