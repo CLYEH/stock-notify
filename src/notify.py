@@ -4,15 +4,13 @@ LINE 通知模組
 """
 
 import requests
-import json
 import os
-from typing import List, Dict
 
 class LineNotifier:
     def __init__(self, line_token=None, line_user_id=None):
         """
         初始化 LINE 通知器
-        
+
         Args:
             line_token (str): LINE Bot 的 Channel Access Token
             line_user_id (str): 要發送訊息的使用者 ID
@@ -20,27 +18,28 @@ class LineNotifier:
         self.line_token = line_token or os.getenv('LINE_TOKEN')
         self.line_user_id = line_user_id or os.getenv('LINE_USER_ID')
         self.api_url = "https://api.line.me/v2/bot/message/push"
-        
+
         if not self.line_token:
             raise ValueError("LINE_TOKEN 未設定，請在環境變數中設定")
         if not self.line_user_id:
             raise ValueError("LINE_USER_ID 未設定，請在環境變數中設定")
-    
+
+        # 重用 HTTP 連線、預設帶上 Authorization header
+        self._session = requests.Session()
+        self._session.headers.update({
+            'Authorization': f'Bearer {self.line_token}',
+        })
+
     def send_message(self, message):
         """
         發送文字訊息到 LINE
-        
+
         Args:
             message (str): 要發送的訊息內容
-            
+
         Returns:
             dict: API 回應結果
         """
-        headers = {
-            'Authorization': f'Bearer {self.line_token}',
-            'Content-Type': 'application/json'
-        }
-        
         data = {
             'to': self.line_user_id,
             'messages': [
@@ -50,24 +49,19 @@ class LineNotifier:
                 }
             ]
         }
-        
+
         try:
-            response = requests.post(
-                self.api_url,
-                headers=headers,
-                data=json.dumps(data),
-                timeout=10
-            )
-            
+            response = self._session.post(self.api_url, json=data, timeout=10)
+
             if response.status_code == 200:
                 return {"success": True, "message": "訊息發送成功"}
             else:
                 return {
-                    "success": False, 
+                    "success": False,
                     "error": f"發送失敗，狀態碼: {response.status_code}",
                     "response": response.text
                 }
-                
+
         except requests.exceptions.RequestException as e:
             return {"success": False, "error": f"網路錯誤: {str(e)}"}
         except Exception as e:
