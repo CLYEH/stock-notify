@@ -64,14 +64,14 @@ VOLUME_MULTIPLIER=2.0
 
 1. 建立 MongoDB 資料庫 (可使用 MongoDB Atlas)
 2. 取得連接密碼
-3. 更新 `main.py` 中的連接字串 (如需要)
+3. 更新 `main2.py` 中的連接字串 (如需要)
 
 ## 使用方法
 
 ### 執行分析
 
 ```bash
-python main.py
+python main2.py
 ```
 
 ### 定時執行
@@ -80,19 +80,20 @@ python main.py
 
 ```bash
 # 每日下午 2:30 執行 (收盤後)
-30 14 * * 1-5 cd /path/to/stock && python main.py
+30 14 * * 1-5 cd /path/to/stock && python main2.py
 ```
 
 ## 專案結構
 
 ```
 stock/
-├── main.py                 # 主程式
+├── main2.py                # 主程式
 ├── src/
 │   ├── notify.py           # LINE 通知模組
 │   └── stock_tool/
-│       ├── pe.py          # PE ratio 分析
-│       └── kdj.py         # KDJ 技術指標分析
+│       ├── pe.py           # PE ratio 分析
+│       ├── kdj.py          # KDJ 技術指標分析
+│       └── twstock_patch.py # twstock 套件 monkey patch
 ├── sample_data/
 │   └── BWIBBU_ALL.json    # 範例資料
 ├── requirements.txt        # 依賴套件

@@ -23,58 +23,48 @@ class KDJAnalyzer:
         # 買賣信號閾值
         self.buy_threshold = 10   # J 值小於 10 考慮買進
         self.sell_threshold = 90  # J 值大於 90 考慮賣出
-    
+
+    @staticmethod
+    def _ewma_with_seed(series, seed, alpha):
+        """以指定 seed 為初始值執行 EWMA，回傳與輸入等長的 Series。"""
+        seeded = pd.concat([pd.Series([seed]), series], ignore_index=True)
+        smoothed = seeded.ewm(alpha=alpha, adjust=False).mean()
+        return smoothed.iloc[1:].reset_index(drop=True)
+
     def calculate_kdj(self, high_prices, low_prices, close_prices):
         """
         計算 KDJ 指標
-        
+
         Args:
             high_prices (list): 最高價序列
-            low_prices (list): 最低價序列  
+            low_prices (list): 最低價序列
             close_prices (list): 收盤價序列
-            
+
         Returns:
             dict: 包含 K, D, J 值的字典
         """
         if len(high_prices) < self.k_period:
             return {"K": None, "D": None, "J": None, "error": "資料不足，無法計算 KDJ"}
-        
+
         try:
             # 轉換為 pandas Series
             high = pd.Series(high_prices)
             low = pd.Series(low_prices)
             close = pd.Series(close_prices)
-            
+
             # 計算 RSV (Raw Stochastic Value)
             lowest_low = low.rolling(window=self.k_period).min()
             highest_high = high.rolling(window=self.k_period).max()
-            
+
             rsv = (close - lowest_low) / (highest_high - lowest_low) * 100
             rsv = rsv.fillna(50)  # 第一個值設為 50
-            
-            # 計算 K 值 (使用指數移動平均)
-            k_values = []
-            k = 50  # 初始值
-            
-            for rsv_val in rsv:
-                if pd.isna(rsv_val):
-                    k_values.append(k)
-                else:
-                    k = (2/3) * k + (1/3) * rsv_val
-                    k_values.append(k)
-            
-            k_series = pd.Series(k_values)
-            
-            # 計算 D 值 (K 值的指數移動平均)
-            d_values = []
-            d = 50  # 初始值
-            
-            for k_val in k_series:
-                d = (2/3) * d + (1/3) * k_val
-                d_values.append(d)
-            
-            d_series = pd.Series(d_values)
-            
+
+            # K[t] = (2/3) K[t-1] + (1/3) RSV[t], 初始值 K = 50
+            # 等同於 alpha=1/3、以 50 為 seed 的 EWMA：將 50 預置於序列首
+            # 做 ewm 後丟棄 seed，即得與原 for-loop 同值的結果（向量化加速）。
+            k_series = self._ewma_with_seed(rsv, seed=50.0, alpha=1.0 / 3.0)
+            d_series = self._ewma_with_seed(k_series, seed=50.0, alpha=1.0 / 3.0)
+
             # 計算 J 值
             j_series = 3 * k_series - 2 * d_series
             
