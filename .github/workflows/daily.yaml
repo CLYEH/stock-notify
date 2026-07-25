@@ -2,33 +2,52 @@ name: daily-stock-job
 
 on:
   schedule:
-    # 每天台北 09:00 執行（台北 UTC+8；09:00 = 01:00 UTC）
+    # 06:30 UTC = 台北 14:30（收盤 13:30 後，證交所已公布當日行情）
     - cron: "30 6 * * 1-5"
   workflow_dispatch: {}  # 手動觸發用
 
 jobs:
-  run:
+  check:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
+          cache: pip
 
-      - name: Install deps
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Lint
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          ruff check src tests
+          ruff format --check src tests
+
+      - name: Type check
+        run: mypy
+
+      - name: Test
+        run: pytest
+
+  run:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -e .
 
       - name: Run job
         env:
-          MONGO_PASSWORD: ${{ secrets.MONGO_PASSWORD }}
+          MONGO_URI: ${{ secrets.MONGO_URI }}
           LINE_TOKEN: ${{ secrets.LINE_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
           VOLUME_MULTIPLIER: ${{ secrets.VOLUME_MULTIPLIER }}
-          # 其他 secrets 也可放這裡
-        run: |
-          python main2.py
+        # 失敗時回傳非零 exit code，workflow 會顯示紅燈
+        run: python -m stock_notify

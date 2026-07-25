@@ -1,5 +1,5 @@
 venv/
-.env
+.venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -8,6 +8,16 @@ __pycache__/
 *.pyz
 *.pywz
 *.pyzw
+
+# 所有 .env 變體都可能含憑證，只有範本進版控
+.env
+.env.*
+!.env.example
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
 
 sample_data/
 

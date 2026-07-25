@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stock-notify"
+version = "2.0.0"
+description = "台股 PE + KDJ 分析並透過 LINE 發送買賣通知"
+requires-python = ">=3.11"
+dependencies = [
+    # 資料改由證交所全市場端點取得，不再需要 twstock 及其 monkey patch。
+    "pandas==2.3.2",
+    "pymongo==4.15.1",
+    "requests==2.31.0",
+    "python-dotenv==1.0.1",
+    "lxml==6.0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.4",
+    "ruff==0.9.6",
+    "mypy==1.15.0",
+    "types-requests==2.31.0.20240406",
+    "pandas-stubs==2.2.3.241126",
+]
+
+[project.scripts]
+stock-notify = "stock_notify.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["stock_notify*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = [
+    "RUF001", # 全形標點與 ASCII 相似字元：本專案訊息為中文，屬預期
+    "RUF002",
+    "RUF003",
+]
+
+[tool.mypy]
+# numpy 隨附的 stub 使用 3.12 的 `type` 語法，低於此版本無法解析
+python_version = "3.12"
+files = ["src"]
+strict = true
+warn_unreachable = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

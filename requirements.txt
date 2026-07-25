@@ -1,7 +1,0 @@
-twstock
-pandas
-numpy
-pymongo
-requests
-python-dotenv
-lxml

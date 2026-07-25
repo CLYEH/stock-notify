@@ -1,162 +1,149 @@
 # 台股分析通知系統
 
-這是一個自動化的台股分析系統，結合 PE ratio 和 KDJ 技術指標分析，透過 LINE Official API 發送買賣建議通知。
+每個交易日收盤後掃描全上市市場，結合本益比與 KDJ 指標判斷買賣時機，透過 LINE 發送通知。
 
-## 功能特色
+## 買賣訊號條件
 
-- **PE Ratio 分析**: 分析股票本益比，識別低估或高估的股票
-- **KDJ 技術指標**: 計算 KDJ 指標，判斷超買或超賣狀態  
-- **成交量分析**: 檢測成交量異常放大的股票
-- **LINE 通知**: 自動發送分析結果到 LINE
-- **MongoDB 整合**: 儲存歷史資料，提升分析效率
+判定的是 **J 值的跨日穿越**，不是所在區間 —— 長期低於 10 的股票不會每天重複觸發，只有跌破當天算一次訊號。
 
-## 買賣信號條件
+| | 條件 |
+|---|---|
+| **買進** | 昨日 J > 10 **且** 今日 J < 10，**並且** PE < 20 |
+| **賣出** | 昨日 J < 90 **且** 今日 J > 90，**並且** PE > 40 |
 
-### 買進條件
-- J 值 < 10 (超賣)
-- PE ratio < 20 (低估)
+兩個條件必須同時成立。KDJ 資料不足 30 個交易日時一律不產生訊號。
 
-### 賣出條件  
-- J 值 > 90 (超買)
-- PE ratio > 40 (高估)
+符合條件的股票若當日成交量達前一交易日的 `VOLUME_MULTIPLIER` 倍（預設 2 倍）以上，會以星號 `*` 標記。
 
-### 成交量標記
-當符合買賣條件的股票，其當日成交量達到前一交易日的 2 倍以上時，會以星號 (*) 標記。
+## 資料來源與頻率限制
+
+證交所對 `www.twse.com.tw` 有約 **6 秒一次**的請求頻率限制，超過會鎖 IP 一小時。因此本系統一律使用**全市場端點**，一個請求涵蓋所有個股：
+
+| 用途 | 端點 | 請求數 |
+|---|---|---|
+| 本益比 / 分析標的清單 | `openapi` BWIBBU_ALL | 1 |
+| 最新交易日行情 | `openapi` STOCK_DAY_ALL | 1 |
+| 歷史回補（僅資料庫缺資料時） | `www` MI_INDEX | 每個缺漏交易日 1 個，間隔 6 秒 |
+| 交易日行事曆 | 新北市開放資料 | 1 |
+
+**每日執行約 3 個請求。** 冷啟動（資料庫為空）需回補 30 個交易日，約 3 分鐘，之後由 MongoDB 快取承接。
+
+行事曆用於推算過去哪些日子有開盤，避免對週末假日發出無謂的請求。
 
 ## 安裝與設定
 
-### 1. 安裝依賴套件
-
 ```bash
-pip install -r requirements.txt
-```
-
-### 2. 環境變數設定
-
-複製 `.env.example` 為 `.env` 並填入相關設定：
-
-```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"      # 開發用；僅執行則 pip install -e .
 cp .env.example .env
 ```
 
-編輯 `.env` 檔案：
+### 環境變數
 
-```env
-# LINE Bot 設定
-LINE_TOKEN=your_line_channel_access_token_here
-LINE_USER_ID=your_line_user_id_here
+| 變數 | 必要 | 說明 |
+|---|---|---|
+| `LINE_TOKEN` | 否 | LINE Channel Access Token。未設定時訊息只寫入 log，不實際發送 |
+| `LINE_USER_ID` | 否 | 收件者 ID。前綴 `U`=個人、`C`=群組、`R`=聊天室 |
+| `MONGO_URI` | 否 | 完整連線字串。未設定時仍可執行，但每次都要付冷啟動成本 |
+| `VOLUME_MULTIPLIER` | 否 | 成交量放大倍數，預設 `2.0` |
+| `LOG_LEVEL` | 否 | 預設 `INFO`；設 `DEBUG` 可看逐檔明細 |
 
-# MongoDB 設定  
-MONGO_PASSWORD=your_mongodb_password_here
+### LINE Bot
 
-# 成交量倍數設定 (可選，預設為 2.0)
-VOLUME_MULTIPLIER=2.0
+1. 前往 [LINE Developers Console](https://developers.line.biz/) 建立 Messaging API channel
+2. 在 **Messaging API** 分頁取得 Channel Access Token，並用手機掃 QR code 加該 Bot 為好友
+3. 個人 User ID 在 **Basic settings** 分頁最下方的 **Your user ID**（`U` 開頭）
+
+### 用不同設定檔測試
+
+測試時建議發給自己而非正式群組：
+
+```bash
+cp .env .env.development     # 再把 LINE_USER_ID 改成自己的 U 開頭 ID
+python -m stock_notify --env-file .env.development
 ```
 
-### 3. LINE Bot 設定
-
-1. 前往 [LINE Developers Console](https://developers.line.biz/)
-2. 建立新的 Channel (Messaging API)
-3. 取得 Channel Access Token
-4. 取得要接收通知的 User ID
-
-### 4. MongoDB 設定
-
-1. 建立 MongoDB 資料庫 (可使用 MongoDB Atlas)
-2. 取得連接密碼
-3. 更新 `main2.py` 中的連接字串 (如需要)
+`.env.development` 已在 `.gitignore` 中（`.env.*` 規則）。
 
 ## 使用方法
 
-### 執行分析
-
 ```bash
-python main2.py
+python -m stock_notify                          # 分析今天
+python -m stock_notify --date 2026-07-24        # 指定日期（驗證用）
+python -m stock_notify --env-file .env.development
 ```
 
-### 定時執行
+### Exit code
 
-建議設定為每日收盤後自動執行，可使用 cron job：
+| 值 | 意義 |
+|---|---|
+| 0 | 成功（含「今日休市」） |
+| 1 | 抓取、通知或未預期的錯誤 |
+| 2 | 設定錯誤 |
+| 130 | 使用者中斷 |
 
-```bash
-# 每日下午 2:30 執行 (收盤後)
-30 14 * * 1-5 cd /path/to/stock && python main2.py
-```
+無法確認今日是否為交易日時（行事曆 API 連續失敗）會**中止並回傳 1**，而不是假設今天有開盤 —— 在休市日發出買賣訊號比不發更糟。
+
+### 排程
+
+`.github/workflows/daily.yaml` 於每個工作日 06:30 UTC（台北 14:30，收盤後）執行，並先跑 lint / 型別檢查 / 測試才執行分析。
+
+需要在 repo 的 Secrets 設定 `MONGO_URI`、`LINE_TOKEN`、`LINE_USER_ID`、`VOLUME_MULTIPLIER`。
 
 ## 專案結構
 
 ```
-stock/
-├── main2.py                # 主程式
-├── src/
-│   ├── notify.py           # LINE 通知模組
-│   └── stock_tool/
-│       ├── pe.py           # PE ratio 分析
-│       ├── kdj.py          # KDJ 技術指標分析
-│       └── twstock_patch.py # twstock 套件 monkey patch
-├── sample_data/
-│   └── BWIBBU_ALL.json    # 範例資料
-├── requirements.txt        # 依賴套件
-├── .env.example           # 環境變數範例
-└── README.md              # 說明文件
+src/stock_notify/
+├── cli.py                  # 進入點，決定 exit code
+├── config.py               # 常數與環境變數
+├── models.py               # Signal / Bar / PriceHistory / StockAnalysis
+├── pipeline.py             # 流程編排
+├── trading_calendar.py     # 交易日判斷、推算過去交易日
+├── analysis/               # 純運算，無 I/O
+│   ├── pe.py               #   本益比判定
+│   ├── kdj.py              #   KDJ 計算
+│   └── signals.py          #   買賣規則（系統唯一的業務規則）
+├── sources/twse.py         # 證交所抓取與解析
+├── storage/mongo.py        # 歷史價格儲存
+└── notify/
+    ├── formatting.py       #   訊息組裝（純函式）
+    └── line.py             #   LINE 推播傳輸
+tests/                      # 全離線，不需網路或資料庫
 ```
 
-## 核心模組說明
+分層原則：`analysis/`、`notify/formatting.py`、`trading_calendar` 的判斷函式都是純函式，不做 I/O、不輸出訊息，因此所有業務規則都能直接單元測試。
 
-### PE Ratio 分析器 (`src/stock_tool/pe.py`)
+## 開發
 
-- `PERatioAnalyzer`: 分析股票本益比
-- 買進閾值: PE < 20
-- 賣出閾值: PE > 40
-
-### KDJ 分析器 (`src/stock_tool/kdj.py`)
-
-- `KDJAnalyzer`: 計算 KDJ 技術指標
-- 買進閾值: J < 10 (超賣)
-- 賣出閾值: J > 90 (超買)
-
-### LINE 通知器 (`src/notify.py`)
-
-- `LineNotifier`: 發送 LINE 通知
-- 支援簡單和詳細通知格式
-- 自動格式化買賣建議訊息
+```bash
+ruff check src tests && ruff format --check src tests
+mypy
+pytest
+```
 
 ## 通知範例
 
 ```
+📊 股票分析 v2 (2026-07-24)
+
 🔴 買進建議
 台積電 2330 * (PE: 18.5, J: 8.2)
 緯創 3231 (PE: 15.3, J: 9.1)
 
-🔵 賣出建議  
+🔵 賣出建議
 鴻海 2317 (PE: 42.1, J: 91.5)
 
 * 表示成交量異常放大
 ```
 
-## 注意事項
-
-1. **交易日檢查**: 程式會自動檢查是否為交易日
-2. **資料來源**: PE ratio 資料來自證交所公開資訊
-3. **歷史資料**: KDJ 計算需要至少 9 個交易日的資料
-4. **網路連線**: 需要穩定的網路連線以獲取即時資料
-5. **API 限制**: 注意證交所 API 的使用限制
-
 ## 故障排除
 
-### 常見問題
-
-1. **MongoDB 連接失敗**
-   - 檢查 `MONGO_PASSWORD` 是否正確
-   - 確認網路連線正常
-
-2. **LINE 通知失敗**
-   - 檢查 `LINE_TOKEN` 和 `LINE_USER_ID` 是否正確
-   - 確認 LINE Bot 已加為好友
-
-3. **股票資料獲取失敗**
-   - 檢查網路連線
-   - 證交所 API 可能暫時無法使用
+| 症狀 | 檢查 |
+|---|---|
+| MI_INDEX 回傳非預期狀態 | 多半是超過 6 秒頻率限制被鎖 IP，等一小時 |
+| 「收盤資料尚未公布」 | 證交所當日行情通常在收盤後一段時間才更新，稍後再執行 |
+| LINE 通知失敗 | 確認 Bot 已被加為好友，且 `LINE_USER_ID` 前綴符合預期對象 |
+| 每次執行都在回補歷史 | `MONGO_URI` 未設定或連線失敗，檢查啟動時的 warning |
 
 ## 授權
 
