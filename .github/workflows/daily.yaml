@@ -5,6 +5,10 @@ on:
     # 06:30 UTC = 台北 14:30（收盤 13:30 後，證交所已公布當日行情）
     - cron: "30 6 * * 1-5"
   workflow_dispatch: {}  # 手動觸發用
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
 
 jobs:
   check:
@@ -32,6 +36,9 @@ jobs:
 
   run:
     needs: check
+    # push / pull_request 只跑 check，不執行分析 ——
+    # 否則每次推程式碼都會對訂閱者發出一則買賣通知。
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
