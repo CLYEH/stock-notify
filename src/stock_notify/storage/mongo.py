@@ -23,13 +23,17 @@ logger = logging.getLogger(__name__)
 
 
 class PriceRepository(Protocol):
-    """歷史價格的存取介面。"""
+    """歷史價格的存取介面。
+
+    一律以 symbol（`2330.TW`、`6488.TWO`）為鍵而非代碼，讓上市與上櫃
+    在同一個 collection 中自我描述所屬市場。
+    """
 
     def load_all(self) -> dict[str, PriceHistory]:
-        """一次載入所有個股的歷史，以股票代碼為鍵。"""
+        """一次載入所有個股的歷史，以 symbol 為鍵。"""
         ...
 
-    def stage(self, code: str, history: PriceHistory) -> None:
+    def stage(self, symbol: str, history: PriceHistory) -> None:
         """累積一筆待寫入的更新。"""
         ...
 
@@ -46,7 +50,7 @@ class NullPriceRepository:
     def load_all(self) -> dict[str, PriceHistory]:
         return {}
 
-    def stage(self, code: str, history: PriceHistory) -> None:
+    def stage(self, symbol: str, history: PriceHistory) -> None:
         return None
 
     def flush(self) -> None:
@@ -103,13 +107,13 @@ def _document_to_history(doc: dict[str, Any]) -> PriceHistory | None:
         return None
 
 
-def _history_to_document(code: str, history: PriceHistory) -> dict[str, Any]:
+def _history_to_document(symbol: str, history: PriceHistory) -> dict[str, Any]:
     """維持舊版的文件結構，既有資料無須遷移。"""
     # BSON 不支援 date，只支援 datetime
     stored_dates = [datetime(d.year, d.month, d.day) for d in history.dates]
     return {
-        "symbol": f"{code}.TW",
-        "code": code,
+        "symbol": symbol,
+        "code": symbol.split(".")[0],
         "name": "",
         "date": history.dates[-1].strftime("%Y-%m-%d"),
         "latest_data": {
@@ -150,25 +154,25 @@ class MongoPriceRepository:
 
         # 依 updated_at 降冪，遇到同一 symbol 的重複文件時保留最新的一筆
         for doc in self._collection.find({}).sort("updated_at", -1):
-            code = doc.get("code")
-            if not code or code in histories:
+            symbol = doc.get("symbol")
+            if not symbol or symbol in histories:
                 continue
             history = _document_to_history(doc)
             if history is None:
                 skipped += 1
                 continue
-            histories[code] = history
+            histories[symbol] = history
 
         logger.info("自 MongoDB 載入 %d 檔歷史資料（略過 %d 筆無效）", len(histories), skipped)
         return histories
 
-    def stage(self, code: str, history: PriceHistory) -> None:
+    def stage(self, symbol: str, history: PriceHistory) -> None:
         if len(history) == 0:
             return
         self._pending.append(
             UpdateOne(
-                {"symbol": f"{code}.TW"},
-                {"$set": _history_to_document(code, history)},
+                {"symbol": symbol},
+                {"$set": _history_to_document(symbol, history)},
                 upsert=True,
             )
         )

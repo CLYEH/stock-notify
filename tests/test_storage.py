@@ -20,7 +20,7 @@ from stock_notify.storage.mongo import (
 
 def test_document_shape_matches_legacy_schema() -> None:
     history = make_prices([10.0, 11.0, 12.0])
-    doc = _history_to_document("2330", history)
+    doc = _history_to_document("2330.TW", history)
 
     assert doc["symbol"] == "2330.TW"
     assert doc["code"] == "2330"
@@ -33,14 +33,14 @@ def test_document_shape_matches_legacy_schema() -> None:
 
 def test_dates_are_stored_as_datetime() -> None:
     """BSON 不支援 date，只支援 datetime；存成 date 會在寫入時才爆炸。"""
-    doc = _history_to_document("2330", make_prices([10.0]))
+    doc = _history_to_document("2330.TW", make_prices([10.0]))
     assert all(isinstance(d, datetime) for d in doc["price_history"]["dates"])
     assert isinstance(doc["latest_data"]["date"], datetime)
 
 
 def test_round_trip_preserves_history() -> None:
     original = make_prices([10.0, 11.0, 12.0], volumes=[100, 200, 300])
-    restored = _document_to_history(_history_to_document("2330", original))
+    restored = _document_to_history(_history_to_document("2330.TW", original))
 
     assert restored is not None
     assert restored.close == original.close
@@ -90,7 +90,7 @@ def test_null_repository_is_a_working_no_op() -> None:
     """未設定 MONGO_URI 時整套流程仍要能跑完，呼叫端不需要判斷 DB 是否存在。"""
     repo = NullPriceRepository()
     assert repo.load_all() == {}
-    repo.stage("2330", make_prices([10.0]))
+    repo.stage("2330.TW", make_prices([10.0]))
     repo.flush()
     repo.close()
 
@@ -102,7 +102,7 @@ def test_create_repository_without_uri_degrades_gracefully() -> None:
 
 def test_empty_history_is_not_staged() -> None:
     repo = NullPriceRepository()
-    repo.stage("2330", PriceHistory([], [], [], [], [], []))
+    repo.stage("2330.TW", PriceHistory([], [], [], [], [], []))
 
 
 def test_legacy_document_with_none_prices_is_rejected() -> None:

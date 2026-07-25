@@ -20,6 +20,11 @@ STOCK_DAY_ALL_URL = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL
 """最新交易日的全市場 OHLCV，一個 request 涵蓋所有個股。"""
 MI_INDEX_URL = "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX"
 """指定日期的全市場 OHLCV，僅用於歷史回補。受 6 秒頻率限制。"""
+
+TPEX_PE_URL = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis"
+TPEX_DAILY_QUOTES_URL = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
+TPEX_HISTORY_URL = "https://www.tpex.org.tw/www/zh-tw/afterTrading/otc"
+"""上櫃歷史行情。主機與證交所不同，限流額度獨立。"""
 LINE_PUSH_API_URL = "https://api.line.me/v2/bot/message/push"
 
 # ---- 分析參數 ----

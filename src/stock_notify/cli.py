@@ -14,7 +14,7 @@ from stock_notify.config import ConfigError, load_settings
 from stock_notify.logging_setup import configure_logging
 from stock_notify.notify.line import NotificationError
 from stock_notify.pipeline import run
-from stock_notify.sources.twse import DataSourceError
+from stock_notify.sources.common import DataSourceError
 from stock_notify.trading_calendar import TradingCalendarError
 
 logger = logging.getLogger(__name__)

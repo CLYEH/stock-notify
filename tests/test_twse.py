@@ -10,12 +10,8 @@ from datetime import date
 
 import pytest
 
-from stock_notify.sources.twse import (
-    DataSourceError,
-    parse_mi_index,
-    parse_stock_day_all,
-    roc_date_to_date,
-)
+from stock_notify.sources.common import DataSourceError, roc_date_to_date
+from stock_notify.sources.twse import parse_mi_index, parse_stock_day_all
 
 DAY = date(2026, 7, 24)
 

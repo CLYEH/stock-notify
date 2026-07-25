@@ -1,4 +1,4 @@
-"""證交所資料抓取。
+"""證交所（上市）資料抓取。
 
 存取策略是本次重構最大的效能改變。舊版用 twstock 逐檔抓取，
 每檔 3 個 request、約 1000 檔 = 約 3000 個 request；而證交所對
@@ -16,8 +16,6 @@
 from __future__ import annotations
 
 import logging
-import time
-from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
@@ -28,16 +26,11 @@ from stock_notify.config import (
     MI_INDEX_URL,
     PE_DATA_URL,
     STOCK_DAY_ALL_URL,
-    TWSE_REQUEST_INTERVAL_SECONDS,
 )
 from stock_notify.models import Bar
+from stock_notify.sources.common import DataSourceError, PeInfo, build_bar, roc_date_to_date
 
 logger = logging.getLogger(__name__)
-
-
-class DataSourceError(Exception):
-    """無法從證交所取得資料。"""
-
 
 NO_DATA_STATUSES = frozenset(
     {
@@ -46,33 +39,6 @@ NO_DATA_STATUSES = frozenset(
     }
 )
 """MI_INDEX 中代表「該日無行情」的已知狀態訊息。其餘狀態視為錯誤。"""
-
-
-@dataclass(frozen=True)
-class PeInfo:
-    """個股本益比。`display` 保留 API 原始字串供通知訊息使用。"""
-
-    name: str
-    display: str
-
-
-def _to_float(value: str) -> float | None:
-    """解析帶千分位的數字。無成交的個股欄位為 '--'。"""
-    cleaned = value.replace(",", "").strip()
-    if not cleaned or cleaned == "--":
-        return None
-    try:
-        return float(cleaned)
-    except ValueError:
-        return None
-
-
-def roc_date_to_date(value: str) -> date:
-    """將民國日期字串（如 '1150724'）轉為西元 date。"""
-    text = value.strip()
-    if len(text) != 7:
-        raise ValueError(f"無法解析民國日期: {value!r}")
-    return date(int(text[:3]) + 1911, int(text[3:5]), int(text[5:7]))
 
 
 def parse_stock_day_all(payload: list[dict[str, str]]) -> tuple[date, dict[str, Bar]]:
@@ -88,7 +54,7 @@ def parse_stock_day_all(payload: list[dict[str, str]]) -> tuple[date, dict[str, 
     bars: dict[str, Bar] = {}
 
     for item in payload:
-        bar = _build_bar(
+        bar = build_bar(
             quote_date,
             item.get("OpeningPrice", ""),
             item.get("HighestPrice", ""),
@@ -132,7 +98,7 @@ def parse_mi_index(payload: dict[str, Any], quote_date: date) -> dict[str, Bar]:
         idx = {name: i for i, name in enumerate(fields)}
         bars: dict[str, Bar] = {}
         for row in table.get("data", []):
-            bar = _build_bar(
+            bar = build_bar(
                 quote_date,
                 row[idx["開盤價"]],
                 row[idx["最高價"]],
@@ -147,31 +113,13 @@ def parse_mi_index(payload: dict[str, Any], quote_date: date) -> dict[str, Bar]:
     return {}
 
 
-def _build_bar(
-    quote_date: date, open_: str, high: str, low: str, close: str, volume: str
-) -> Bar | None:
-    """任一價格欄位缺值即回傳 None —— 停牌或無成交的個股不納入 KDJ 計算。"""
-    values = [_to_float(open_), _to_float(high), _to_float(low), _to_float(close)]
-    if any(v is None for v in values):
-        return None
-    parsed_volume = _to_float(volume) or 0.0
-    return Bar(
-        date=quote_date,
-        open=values[0],  # type: ignore[arg-type]
-        high=values[1],  # type: ignore[arg-type]
-        low=values[2],  # type: ignore[arg-type]
-        close=values[3],  # type: ignore[arg-type]
-        volume=int(parsed_volume),
-    )
-
-
 def fetch_pe_data(session: requests.Session) -> dict[str, PeInfo]:
-    """取得全市場本益比。
+    """取得上市全市場本益比。
 
     BWIBBU_ALL 僅涵蓋上市普通股（實測 1080 檔、無 ETF 與權證），
     因此同時作為分析標的清單，不需要額外的股票清單來源。
     """
-    logger.info("取得本益比資料")
+    logger.info("取得上市本益比資料")
     try:
         response = session.get(PE_DATA_URL, timeout=HTTP_TIMEOUT_SECONDS)
         response.raise_for_status()
@@ -188,13 +136,13 @@ def fetch_pe_data(session: requests.Session) -> dict[str, PeInfo]:
         # 舊版同樣過濾掉本益比為空字串的個股，維持分析標的一致
         if item.get("Code") and item.get("PEratio")
     }
-    logger.info("本益比資料 %d 檔（原始 %d 筆）", len(result), len(payload))
+    logger.info("上市本益比資料 %d 檔（原始 %d 筆）", len(result), len(payload))
     return result
 
 
 def fetch_latest_quotes(session: requests.Session) -> tuple[date, dict[str, Bar]]:
-    """取得最新交易日的全市場 OHLCV（一個 request）。"""
-    logger.info("取得最新交易日全市場行情")
+    """取得上市最新交易日的全市場 OHLCV（一個 request）。"""
+    logger.info("取得上市最新交易日全市場行情")
     try:
         response = session.get(STOCK_DAY_ALL_URL, timeout=HTTP_TIMEOUT_SECONDS)
         response.raise_for_status()
@@ -203,15 +151,15 @@ def fetch_latest_quotes(session: requests.Session) -> tuple[date, dict[str, Bar]
         raise DataSourceError(f"取得最新行情失敗: {exc}") from exc
 
     quote_date, bars = parse_stock_day_all(payload)
-    logger.info("最新行情日期 %s，共 %d 檔", quote_date.isoformat(), len(bars))
+    logger.info("上市最新行情日期 %s，共 %d 檔", quote_date.isoformat(), len(bars))
     return quote_date, bars
 
 
 def fetch_quotes_for_date(session: requests.Session, day: date) -> dict[str, Bar]:
-    """取得指定日期的全市場 OHLCV。非交易日回傳空 dict。
+    """取得上市指定日期的全市場 OHLCV。非交易日回傳空 dict。
 
     此端點位於 www.twse.com.tw，有約 6 秒一次的頻率限制，
-    超過會鎖 IP 一小時，因此呼叫端必須透過 `throttle()` 控制間隔。
+    超過會鎖 IP 一小時，因此呼叫端必須透過 `Throttle` 控制間隔。
     """
     try:
         response = session.get(
@@ -225,19 +173,3 @@ def fetch_quotes_for_date(session: requests.Session, day: date) -> dict[str, Bar
         raise DataSourceError(f"取得 {day.isoformat()} 行情失敗: {exc}") from exc
 
     return parse_mi_index(payload, day)
-
-
-class Throttle:
-    """確保對同一主機的連續請求間隔不小於指定秒數。"""
-
-    def __init__(self, interval: float = TWSE_REQUEST_INTERVAL_SECONDS) -> None:
-        self._interval = interval
-        self._last_call: float | None = None
-
-    def wait(self) -> None:
-        if self._last_call is not None:
-            remaining = self._interval - (time.monotonic() - self._last_call)
-            if remaining > 0:
-                logger.debug("等待 %.1f 秒以符合證交所頻率限制", remaining)
-                time.sleep(remaining)
-        self._last_call = time.monotonic()
