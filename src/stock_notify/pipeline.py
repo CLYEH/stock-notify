@@ -99,12 +99,8 @@ def _analyse_and_notify(
         if not pe_data:
             raise DataSourceError(f"{market.name}本益比資料為空，無法決定分析標的")
 
-        market_date, latest_bars = market.fetch_latest_quotes(session)
-        if market_date < today:
-            raise DataSourceError(
-                f"今日 ({today.isoformat()}) 為交易日，但{market.name}最新行情仍停留在 "
-                f"{market_date.isoformat()}，收盤資料尚未公布"
-            )
+        latest_bars = _fetch_quotes_for_day(session, market, today)
+        market_date = today
         market_dates.append(market_date)
 
         # 多取幾天作為緩衝：行事曆說是交易日、交易所卻無行情的日子會讓每一檔都少一根
@@ -145,6 +141,36 @@ def _analyse_and_notify(
         notifier.send(format_no_signal(len(analyses), report_date))
 
     return RunResult(market_date=report_date, analyzed=len(analyses), buys=buys, sells=sells)
+
+
+def _fetch_quotes_for_day(session: requests.Session, market: Market, day: date) -> dict[str, Bar]:
+    """取得指定交易日的全市場行情。
+
+    先試免限流的 openapi 端點，但**不能假設它是最新的**：實測 2026-07-27
+    收盤後 5 小時，證交所的 STOCK_DAY_ALL 仍停留在 07-24，而同一時間
+    受限流的日期查詢端點早已有當日資料。因此 openapi 未涵蓋目標日期時
+    退回日期查詢（一個請求）。
+
+    Raises:
+        DataSourceError: 兩個端點都沒有該日資料，代表收盤資料尚未公布。
+    """
+    latest_date, bars = market.fetch_latest_quotes(session)
+    if latest_date == day:
+        return bars
+
+    logger.info(
+        "%s最新行情端點停留在 %s，改用日期查詢取得 %s 的行情",
+        market.name,
+        latest_date.isoformat(),
+        day.isoformat(),
+    )
+    dated_bars = market.fetch_quotes_for_date(session, day)
+    if not dated_bars:
+        raise DataSourceError(
+            f"{market.name}於 {day.isoformat()} 尚無行情資料（最新行情端點為 "
+            f"{latest_date.isoformat()}）；若今日確實有開市，代表收盤資料尚未公布"
+        )
+    return dated_bars
 
 
 def _collect_quotes(

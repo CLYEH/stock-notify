@@ -210,3 +210,88 @@ def test_stores_full_candidate_window_not_just_the_analysis_window() -> None:
 
     assert len(stored["A.TW"]) == len(candidates), "應儲存整個候選區間"
     assert analyses[0].data_length == DEFAULT_DAYS, "分析只使用最後 DEFAULT_DAYS 根"
+
+
+# --------------------------------------------------------------------------
+# 取得當日行情：兩個端點的更新時間不同步
+# --------------------------------------------------------------------------
+
+
+def market_with_endpoints(
+    latest: tuple[date, dict[str, Bar]],
+    dated: dict[date, dict[str, Bar]],
+    dated_calls: list[date],
+) -> Market:
+    def fetch_latest(session: object) -> tuple[date, dict[str, Bar]]:
+        return latest
+
+    def fetch_dated(session: object, day: date) -> dict[str, Bar]:
+        dated_calls.append(day)
+        return dated.get(day, {})
+
+    def unused(*args: object, **kwargs: object) -> object:
+        raise AssertionError("不應被呼叫")
+
+    return Market(
+        name="測試市場",
+        suffix=".TW",
+        fetch_pe=unused,  # type: ignore[arg-type]
+        fetch_latest_quotes=fetch_latest,
+        fetch_quotes_for_date=fetch_dated,
+    )
+
+
+def test_uses_cheap_endpoint_when_it_is_current() -> None:
+    """免限流的端點已涵蓋目標日期時，不該多發一個受限流的請求。"""
+    from stock_notify.pipeline import _fetch_quotes_for_day
+
+    today = date(2026, 7, 27)
+    calls: list[date] = []
+    market = market_with_endpoints((today, bars_for(["A"], today)), {}, calls)
+
+    bars = _fetch_quotes_for_day(None, market, today)  # type: ignore[arg-type]
+
+    assert "A" in bars
+    assert calls == [], "不該退回日期查詢"
+
+
+def test_falls_back_when_cheap_endpoint_is_stale() -> None:
+    """openapi 端點落後時必須改用日期查詢，而不是中止執行。
+
+    這是 2026-07-27 排程失敗的原因：收盤後 5 小時，證交所的 STOCK_DAY_ALL
+    仍停留在 07-24（落後 3 天），但同一時間日期查詢端點早已有當日資料。
+    當時的程式直接判定「收盤資料尚未公布」而 exit 1，整天沒有發出通知。
+    """
+    from stock_notify.pipeline import _fetch_quotes_for_day
+
+    today = date(2026, 7, 27)
+    stale = date(2026, 7, 24)
+    calls: list[date] = []
+    market = market_with_endpoints(
+        (stale, bars_for(["OLD"], stale)),
+        {today: bars_for(["A", "B"], today)},
+        calls,
+    )
+
+    bars = _fetch_quotes_for_day(None, market, today)  # type: ignore[arg-type]
+
+    assert calls == [today]
+    assert set(bars) == {"A", "B"}
+    assert "OLD" not in bars, "不可回退成舊日期的行情，那會用過期價格產生訊號"
+
+
+def test_raises_when_neither_endpoint_has_the_day() -> None:
+    """兩個端點都沒有資料才是真的「尚未公布」，此時中止是正確的 ——
+    用前一交易日的收盤價產生買賣訊號比不發通知更糟。"""
+    from stock_notify.pipeline import _fetch_quotes_for_day
+    from stock_notify.sources.common import DataSourceError
+
+    today = date(2026, 7, 27)
+    stale = date(2026, 7, 24)
+    calls: list[date] = []
+    market = market_with_endpoints((stale, bars_for(["OLD"], stale)), {}, calls)
+
+    with pytest.raises(DataSourceError, match="尚無行情資料"):
+        _fetch_quotes_for_day(None, market, today)  # type: ignore[arg-type]
+
+    assert calls == [today], "應確實嘗試過日期查詢才放棄"
