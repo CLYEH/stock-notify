@@ -18,14 +18,15 @@ from typing import Any
 
 import requests
 
-from stock_notify.config import (
-    HTTP_TIMEOUT_SECONDS,
-    TPEX_DAILY_QUOTES_URL,
-    TPEX_HISTORY_URL,
-    TPEX_PE_URL,
-)
+from stock_notify.config import TPEX_DAILY_QUOTES_URL, TPEX_HISTORY_URL, TPEX_PE_URL
 from stock_notify.models import Bar
-from stock_notify.sources.common import DataSourceError, PeInfo, build_bar, roc_date_to_date
+from stock_notify.sources.common import (
+    DataSourceError,
+    PeInfo,
+    build_bar,
+    get_json,
+    roc_date_to_date,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -117,12 +118,7 @@ def parse_history(payload: dict[str, Any], quote_date: date) -> dict[str, Bar]:
 def fetch_pe_data(session: requests.Session) -> dict[str, PeInfo]:
     """取得上櫃全市場本益比，同時作為分析標的清單。"""
     logger.info("取得上櫃本益比資料")
-    try:
-        response = session.get(TPEX_PE_URL, timeout=HTTP_TIMEOUT_SECONDS)
-        response.raise_for_status()
-        payload = response.json()
-    except (requests.RequestException, ValueError) as exc:
-        raise DataSourceError(f"取得上櫃本益比資料失敗: {exc}") from exc
+    payload = get_json(session, TPEX_PE_URL, "取得上櫃本益比資料")
 
     result = parse_pe(payload)
     logger.info("上櫃本益比資料 %d 檔（原始 %d 筆）", len(result), len(payload))
@@ -132,12 +128,7 @@ def fetch_pe_data(session: requests.Session) -> dict[str, PeInfo]:
 def fetch_latest_quotes(session: requests.Session) -> tuple[date, dict[str, Bar]]:
     """取得上櫃最新交易日的全市場 OHLCV（一個 request）。"""
     logger.info("取得上櫃最新交易日全市場行情")
-    try:
-        response = session.get(TPEX_DAILY_QUOTES_URL, timeout=HTTP_TIMEOUT_SECONDS)
-        response.raise_for_status()
-        payload = response.json()
-    except (requests.RequestException, ValueError) as exc:
-        raise DataSourceError(f"取得上櫃最新行情失敗: {exc}") from exc
+    payload = get_json(session, TPEX_DAILY_QUOTES_URL, "取得上櫃最新行情")
 
     quote_date, bars = parse_daily_quotes(payload)
     logger.info("上櫃最新行情日期 %s，共 %d 檔", quote_date.isoformat(), len(bars))
@@ -146,15 +137,10 @@ def fetch_latest_quotes(session: requests.Session) -> tuple[date, dict[str, Bar]
 
 def fetch_quotes_for_date(session: requests.Session, day: date) -> dict[str, Bar]:
     """取得上櫃指定日期的全市場 OHLCV。非交易日回傳空 dict。"""
-    try:
-        response = session.get(
-            TPEX_HISTORY_URL,
-            params={"date": day.strftime("%Y/%m/%d"), "type": "EW", "response": "json"},
-            timeout=HTTP_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        payload = response.json()
-    except (requests.RequestException, ValueError) as exc:
-        raise DataSourceError(f"取得上櫃 {day.isoformat()} 行情失敗: {exc}") from exc
-
+    payload = get_json(
+        session,
+        TPEX_HISTORY_URL,
+        f"取得上櫃 {day.isoformat()} 行情",
+        params={"date": day.strftime("%Y/%m/%d"), "type": "EW", "response": "json"},
+    )
     return parse_history(payload, day)

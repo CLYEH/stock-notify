@@ -1,4 +1,4 @@
-"""上市與上櫃共用的解析工具與限流。"""
+"""上市與上櫃共用的抓取、解析工具與限流。"""
 
 from __future__ import annotations
 
@@ -6,11 +6,21 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import date
+from typing import Any
 
-from stock_notify.config import TWSE_REQUEST_INTERVAL_SECONDS
+import requests
+
+from stock_notify.config import HTTP_TIMEOUT_SECONDS, TWSE_REQUEST_INTERVAL_SECONDS
 from stock_notify.models import Bar
 
 logger = logging.getLogger(__name__)
+
+FETCH_ATTEMPTS = 3
+"""單一端點的總嘗試次數。
+
+交易所端點偶發連線中斷（實測 "Response ended prematurely"、
+"RemoteDisconnected"）。這類抖動不該讓整天的通知消失。
+"""
 
 
 class DataSourceError(Exception):
@@ -23,6 +33,39 @@ class PeInfo:
 
     name: str
     display: str
+
+
+def get_json(
+    session: requests.Session,
+    url: str,
+    description: str,
+    params: dict[str, str] | None = None,
+    attempts: int = FETCH_ATTEMPTS,
+) -> Any:
+    """發出 GET 並解析 JSON，暫時性失敗時重試。
+
+    重試間隔採用限流間隔而非更短的退避 —— 受限流的端點若重試太快，
+    反而會觸發鎖 IP 一小時，讓情況更糟。
+
+    Raises:
+        DataSourceError: 所有嘗試皆失敗。
+    """
+    last_error: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            response = session.get(url, params=params, timeout=HTTP_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            return response.json()
+        except (requests.RequestException, ValueError) as exc:
+            last_error = exc
+            logger.warning("%s失敗 (第 %d/%d 次): %s", description, attempt, attempts, exc)
+            if attempt < attempts:
+                time.sleep(TWSE_REQUEST_INTERVAL_SECONDS)
+
+    raise DataSourceError(
+        f"{description}失敗（已重試 {attempts} 次）: {last_error}"
+    ) from last_error
 
 
 def to_float(value: str) -> float | None:

@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
+import requests
 
 from stock_notify.sources.common import DataSourceError, roc_date_to_date
 from stock_notify.sources.twse import parse_mi_index, parse_stock_day_all
@@ -112,3 +113,78 @@ def test_unknown_status_raises_instead_of_looking_like_a_holiday() -> None:
 def test_empty_stock_day_all_raises() -> None:
     with pytest.raises(DataSourceError):
         parse_stock_day_all([])
+
+
+# --------------------------------------------------------------------------
+# 抓取重試
+# --------------------------------------------------------------------------
+
+
+class _FlakySession:
+    """前 `failures` 次拋出網路錯誤，之後成功。"""
+
+    def __init__(self, failures: int, payload: object = None) -> None:
+        self.failures = failures
+        self.payload = payload if payload is not None else {"ok": True}
+        self.calls = 0
+
+    def get(self, url: str, params: object = None, timeout: int = 0) -> object:
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise requests.ConnectionError("Response ended prematurely")
+        return _Response(self.payload)
+
+
+class _Response:
+    def __init__(self, payload: object) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> object:
+        return self._payload
+
+
+def test_transient_network_error_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """交易所端點偶發連線中斷，不該讓整天的通知消失。
+
+    2026-07-27 的手動執行就是這樣失敗的：上櫃行情端點回傳
+    "Response ended prematurely"，當時沒有重試，整個流程 exit 1，
+    連已經算好的上市 17 個訊號也一併丟失。
+    """
+    from stock_notify.sources.common import get_json
+
+    monkeypatch.setattr("stock_notify.sources.common.time.sleep", lambda _: None)
+    session = _FlakySession(failures=2, payload={"data": 1})
+
+    result = get_json(session, "https://example.test", "測試抓取")  # type: ignore[arg-type]
+
+    assert result == {"data": 1}
+    assert session.calls == 3
+
+
+def test_retry_gives_up_and_reports_the_cause(monkeypatch: pytest.MonkeyPatch) -> None:
+    from stock_notify.sources.common import get_json
+
+    monkeypatch.setattr("stock_notify.sources.common.time.sleep", lambda _: None)
+    session = _FlakySession(failures=99)
+
+    with pytest.raises(DataSourceError, match="已重試 3 次"):
+        get_json(session, "https://example.test", "測試抓取")  # type: ignore[arg-type]
+
+    assert session.calls == 3
+
+
+def test_retry_backoff_respects_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """重試間隔必須 >= 限流間隔，否則重試本身會觸發鎖 IP 一小時。"""
+    from stock_notify.config import TWSE_REQUEST_INTERVAL_SECONDS
+    from stock_notify.sources.common import get_json
+
+    slept: list[float] = []
+    monkeypatch.setattr("stock_notify.sources.common.time.sleep", slept.append)
+
+    get_json(_FlakySession(failures=1), "https://example.test", "測試")  # type: ignore[arg-type]
+
+    assert slept, "失敗後應等待再重試"
+    assert all(s >= TWSE_REQUEST_INTERVAL_SECONDS for s in slept)

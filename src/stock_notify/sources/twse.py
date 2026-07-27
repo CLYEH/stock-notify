@@ -21,14 +21,15 @@ from typing import Any
 
 import requests
 
-from stock_notify.config import (
-    HTTP_TIMEOUT_SECONDS,
-    MI_INDEX_URL,
-    PE_DATA_URL,
-    STOCK_DAY_ALL_URL,
-)
+from stock_notify.config import MI_INDEX_URL, PE_DATA_URL, STOCK_DAY_ALL_URL
 from stock_notify.models import Bar
-from stock_notify.sources.common import DataSourceError, PeInfo, build_bar, roc_date_to_date
+from stock_notify.sources.common import (
+    DataSourceError,
+    PeInfo,
+    build_bar,
+    get_json,
+    roc_date_to_date,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,12 +121,7 @@ def fetch_pe_data(session: requests.Session) -> dict[str, PeInfo]:
     因此同時作為分析標的清單，不需要額外的股票清單來源。
     """
     logger.info("取得上市本益比資料")
-    try:
-        response = session.get(PE_DATA_URL, timeout=HTTP_TIMEOUT_SECONDS)
-        response.raise_for_status()
-        payload = response.json()
-    except (requests.RequestException, ValueError) as exc:
-        raise DataSourceError(f"取得本益比資料失敗: {exc}") from exc
+    payload = get_json(session, PE_DATA_URL, "取得上市本益比資料")
 
     result = {
         item["Code"]: PeInfo(
@@ -143,12 +139,7 @@ def fetch_pe_data(session: requests.Session) -> dict[str, PeInfo]:
 def fetch_latest_quotes(session: requests.Session) -> tuple[date, dict[str, Bar]]:
     """取得上市最新交易日的全市場 OHLCV（一個 request）。"""
     logger.info("取得上市最新交易日全市場行情")
-    try:
-        response = session.get(STOCK_DAY_ALL_URL, timeout=HTTP_TIMEOUT_SECONDS)
-        response.raise_for_status()
-        payload = response.json()
-    except (requests.RequestException, ValueError) as exc:
-        raise DataSourceError(f"取得最新行情失敗: {exc}") from exc
+    payload = get_json(session, STOCK_DAY_ALL_URL, "取得上市最新行情")
 
     quote_date, bars = parse_stock_day_all(payload)
     logger.info("上市最新行情日期 %s，共 %d 檔", quote_date.isoformat(), len(bars))
@@ -161,15 +152,10 @@ def fetch_quotes_for_date(session: requests.Session, day: date) -> dict[str, Bar
     此端點位於 www.twse.com.tw，有約 6 秒一次的頻率限制，
     超過會鎖 IP 一小時，因此呼叫端必須透過 `Throttle` 控制間隔。
     """
-    try:
-        response = session.get(
-            MI_INDEX_URL,
-            params={"date": day.strftime("%Y%m%d"), "type": "ALLBUT0999", "response": "json"},
-            timeout=HTTP_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        payload = response.json()
-    except (requests.RequestException, ValueError) as exc:
-        raise DataSourceError(f"取得 {day.isoformat()} 行情失敗: {exc}") from exc
-
+    payload = get_json(
+        session,
+        MI_INDEX_URL,
+        f"取得上市 {day.isoformat()} 行情",
+        params={"date": day.strftime("%Y%m%d"), "type": "ALLBUT0999", "response": "json"},
+    )
     return parse_mi_index(payload, day)
